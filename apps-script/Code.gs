@@ -8,7 +8,7 @@
  */
 
 // ===== 여기 두 비밀번호를 바꾸세요 =====
-const TEAM_PASSWORD  = '여기에-팀-비밀번호';
+const TEAM_PASSWORD  = '';  // 사용하지 않음 (일반 화면은 로그인 없이 사용)
 const ADMIN_PASSWORD = '여기에-관리자-비밀번호';
 // ======================================
 
@@ -22,11 +22,11 @@ function doGet() {
 function doPost(e) {
   let req;
   try { req = JSON.parse(e.postData.contents); } catch (x) { return out({ ok: false, error: 'bad_request' }); }
-  if (TEAM_PASSWORD.indexOf('여기에') === 0 || ADMIN_PASSWORD.indexOf('여기에') === 0) {
+  if (ADMIN_PASSWORD.indexOf('여기에') === 0) {
     return out({ ok: false, error: 'not_configured' });
   }
-  const role = req.pw === ADMIN_PASSWORD ? 'admin' : req.pw === TEAM_PASSWORD ? 'team' : null;
-  if (!role) return out({ ok: false, error: 'wrong_password' });
+  const role = req.pw === ADMIN_PASSWORD ? 'admin' : 'team';
+  if (req.action === 'login' && role !== 'admin') return out({ ok: false, error: 'wrong_password' });
   try {
     switch (req.action) {
       case 'login':  return out({ ok: true, role: role });

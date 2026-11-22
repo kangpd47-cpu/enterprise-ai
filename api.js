@@ -2,10 +2,13 @@
  * 페이지 코드가 쓰는 저장소·사용자·다운로드 기능을 구글 Apps Script 백엔드로 연결합니다. */
 (function () {
   const API = window.PROMO_API_URL;
-  const LS = 'promoLedgerAuth';
+  const ADMIN = window.PROMO_MODE === 'admin';
+  const LS = 'promoLedgerAdmin';
+  const PUBLIC_AUTH = { name: '일반 사용자', pw: '', role: 'team' };
   let auth = null;
-  try { auth = JSON.parse(localStorage.getItem(LS) || 'null'); } catch (_) {}
-  const saveAuth = a => { auth = a; try { a ? localStorage.setItem(LS, JSON.stringify(a)) : localStorage.removeItem(LS); } catch (_) {} };
+  if (ADMIN) { try { auth = JSON.parse(localStorage.getItem(LS) || 'null'); } catch (_) {} }
+  else auth = PUBLIC_AUTH;
+  const saveAuth = a => { auth = a; if (!ADMIN) return; try { a ? localStorage.setItem(LS, JSON.stringify(a)) : localStorage.removeItem(LS); } catch (_) {} };
 
   async function call(action, extra) {
     if (!API) { const e = new Error('not_configured'); e.code = 'unavailable'; throw e; }
@@ -15,7 +18,7 @@
       j = await res.json();
     } catch (x) { const e = new Error('network'); e.code = 'unavailable'; throw e; }
     if (!j.ok) {
-      if (j.error === 'wrong_password' && action !== 'login') { saveAuth(null); location.reload(); }
+      if (j.error === 'wrong_password' && action !== 'login' && ADMIN) { saveAuth(null); location.reload(); }
       const e = new Error(j.error); e.code = j.error === 'forbidden' ? 'invalid_argument' : 'unavailable'; e.raw = j.error; throw e;
     }
     return j;
@@ -94,36 +97,37 @@
   let readyResolve; const ready = new Promise(r => { readyResolve = r; });
   window.claude = { use: async name => { await ready; return { db: dbNs, user: userNs, downloads: downloadsNs }[name] || null; } };
 
-  /* ---------- 로그인 화면 ---------- */
-  function loginScreen(msg) {
+  /* ---------- 관리자 로그인 화면 ---------- */
+  function loginScreen() {
     const wrap = document.createElement('div');
     wrap.id = 'loginGate';
     wrap.innerHTML = `
       <form class="login-card" id="loginForm" autocomplete="on">
-        <h1>판촉물 관리대장</h1>
-        <p class="hint">팀 비밀번호로 들어갑니다. 입고·명단·변경 이력은 관리자 비밀번호로 들어와야 보입니다.</p>
-        <label>이름<input id="loginName" required placeholder="예: 홍길동" autocomplete="name"></label>
-        <label>비밀번호<input id="loginPw" type="password" required autocomplete="current-password"></label>
-        <span class="hint err" id="loginErr">${msg || ''}</span>
+        <h1>관리자 로그인</h1>
+        <p class="hint">입고 등록·수정, 출고자 명단, 변경 이력은 관리자만 볼 수 있습니다.</p>
+        <input type="text" name="username" value="admin" autocomplete="username" hidden>
+        <label>관리자 비밀번호<input id="loginPw" type="password" required autocomplete="current-password"></label>
+        <span class="hint err" id="loginErr"></span>
         <button class="btn primary" type="submit" id="loginBtn">들어가기</button>
+        <a class="hint" href="./" style="text-align:center">← 일반 화면으로 돌아가기</a>
       </form>`;
     document.body.appendChild(wrap);
-    try { const last = localStorage.getItem('promoLedgerLastName'); if (last) wrap.querySelector('#loginName').value = last; } catch (_) {}
-    if (!API) { wrap.querySelector('#loginErr').textContent = '아직 구글 시트 주소(config.js)가 설정되지 않았습니다. 관리자에게 문의하세요.'; wrap.querySelector('#loginBtn').disabled = true; }
+    wrap.querySelector('#loginPw').focus();
+    if (!API) { wrap.querySelector('#loginErr').textContent = '구글 시트 주소(config.js)가 설정되지 않았습니다.'; wrap.querySelector('#loginBtn').disabled = true; }
     wrap.querySelector('#loginForm').onsubmit = async e => {
       e.preventDefault();
-      const name = wrap.querySelector('#loginName').value.trim(), pw = wrap.querySelector('#loginPw').value;
+      const pw = wrap.querySelector('#loginPw').value;
       const err = wrap.querySelector('#loginErr'), btn = wrap.querySelector('#loginBtn');
       btn.disabled = true; btn.textContent = '확인 중…'; err.textContent = '';
       try {
-        saveAuth({ name, pw });
+        saveAuth({ name: '관리자', pw });
         const j = await call('login');
-        saveAuth({ name, pw, role: j.role });
-        try { localStorage.setItem('promoLedgerLastName', name); } catch (_) {}
+        if (j.role !== 'admin') { const x = new Error('wrong_password'); x.raw = 'wrong_password'; throw x; }
+        saveAuth({ name: '관리자', pw, role: 'admin' });
         wrap.remove(); start();
       } catch (x) {
         saveAuth(null);
-        err.textContent = x.raw === 'wrong_password' ? '비밀번호가 맞지 않습니다.' : x.raw === 'not_configured' ? '구글 시트 쪽 비밀번호가 아직 설정되지 않았습니다.' : '연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.';
+        err.textContent = x.raw === 'wrong_password' ? '관리자 비밀번호가 맞지 않습니다.' : x.raw === 'not_configured' ? '구글 시트 쪽 비밀번호가 아직 설정되지 않았습니다.' : '연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도하세요.';
         btn.disabled = false; btn.textContent = '들어가기';
       }
     };
@@ -134,18 +138,29 @@
     if (!hrow || document.getElementById('whoBox')) return;
     const box = document.createElement('div');
     box.id = 'whoBox'; box.className = 'who';
-    box.innerHTML = `<span>${(auth.name || '').replace(/[<>&"]/g, '')}${auth.role === 'admin' ? ' · 관리자' : ''}</span><button type="button" class="btn sm" id="btnLogout">로그아웃</button>`;
+    box.innerHTML = ADMIN
+      ? `<span class="pill warn">관리자 모드</span><a class="btn sm" href="./">일반 화면</a><button type="button" class="btn sm" id="btnLogout">로그아웃</button>`
+      : `<a class="btn sm" href="admin.html">관리자</a>`;
     hrow.insertBefore(box, document.getElementById('btnExport'));
-    box.querySelector('#btnLogout').onclick = () => { saveAuth(null); location.reload(); };
+    const lo = box.querySelector('#btnLogout');
+    if (lo) lo.onclick = () => { saveAuth(null); location.href = './'; };
+  }
+
+  function banner(msg) {
+    let b = document.getElementById('apiBanner');
+    if (!b) { b = document.createElement('div'); b.id = 'apiBanner'; b.className = 'wrap hint err'; b.style.paddingBlock = '10px';
+      const h = document.querySelector('header'); h && h.after(b); }
+    b.textContent = msg;
   }
 
   async function start() {
     addHeaderControls();
-    try { await refresh(); } catch (_) {}
+    try { await refresh(); }
+    catch (x) { banner(x && x.raw === 'wrong_password' ? '구글 시트 코드가 아직 로그인 없는 방식으로 업데이트되지 않았습니다. 관리자에게 알려주세요.' : '데이터를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.'); }
     readyResolve();
     setInterval(() => { if (document.visibilityState === 'visible') refresh().catch(() => {}); }, 20000);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh().catch(() => {}); });
   }
 
-  document.addEventListener('DOMContentLoaded', () => { if (auth && auth.pw && auth.role) start(); else loginScreen(); });
+  document.addEventListener('DOMContentLoaded', () => { if (!ADMIN || (auth && auth.pw && auth.role === 'admin')) start(); else loginScreen(); });
 })();
