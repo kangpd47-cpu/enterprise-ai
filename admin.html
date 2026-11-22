@@ -6,9 +6,9 @@
 <meta name="theme-color" content="#0E6B5C">
 <meta name="robots" content="noindex">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}[hidden]{display:none!important}img{max-width:100%}</style>
-<script src="config.js?v=20261122b"></script>
+<script src="config.js?v=20261122c"></script>
 <script>window.PROMO_MODE='admin';</script>
-<script src="api.js?v=20261122b"></script>
+<script src="api.js?v=20261122c"></script>
 <title>판촉물 관리대장 관리자</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -719,9 +719,15 @@ svg text{fill:var(--muted);font-family:var(--f-num);font-size:11px}
     const eo=e.target.closest('[data-editout]'); if(eo) return openOutEdit(eo.dataset.editout);
     const ei=e.target.closest('[data-editin]'); if(ei) return isOwner ? openInEdit(ei.dataset.editin) : toast('입고 수정은 강소연 님만 할 수 있습니다');
     const del=e.target.closest('[data-del]'); if(del){ const t=txns.find(x=>x.id===del.dataset.del); if(!t) return;
+      let lastOfItem=false, outCount=0;
       if(t.type==='in'){ if(!isOwner) return toast('입고 삭제는 강소연 님만 할 수 있습니다');
-        const s=stockMap()[t.itemId]||{in:0,out:0}; if(s.in-s.out-(+t.qty||0)<0) return toast(`이 입고를 지우면 ${itemName(t)} 재고가 마이너스가 됩니다. 출고 기록을 먼저 정리하세요.`); }
-      const ok=await confirmBox('기록 삭제',`${esc(t.date)} · ${esc(itemName(t))} ${fmt(t.qty)} ${t.type==='in'?'입고':'출고'} 기록을 삭제합니다. 재고 수량도 함께 바뀝니다.`,'삭제');
+        lastOfItem = txns.filter(x=>x.type==='in'&&x.itemId===t.itemId).length===1;
+        outCount = txns.filter(x=>x.type==='out'&&x.itemId===t.itemId).length;
+        const s=stockMap()[t.itemId]||{in:0,out:0};
+        if(!lastOfItem && s.in-s.out-(+t.qty||0)<0) return toast(`이 입고를 지우면 ${itemName(t)} 재고가 마이너스가 됩니다. 출고 기록을 먼저 정리하세요.`); }
+      const ok=await confirmBox(lastOfItem?'품목 삭제':'기록 삭제', lastOfItem
+        ? `<strong>${esc(itemName(t))}</strong>의 마지막 입고 기록입니다. 삭제하면 이 품목이 판촉물 현황과 출고 품목 목록에서 사라지고${outCount?`, 이 품목의 출고 내역 ${outCount}건도 화면과 엑셀에서 보이지 않게 됩니다`:''}.`
+        : `${esc(t.date)} · ${esc(itemName(t))} ${fmt(t.qty)} ${t.type==='in'?'입고':'출고'} 기록을 삭제합니다. 재고 수량도 함께 바뀝니다.`,'삭제');
       if(!ok) return; try{ await db.collection(t.type==='in'?'inbound':'txns').doc(t.id).delete(); toast('기록을 삭제했습니다'); logHistory('삭제',t.type,t,null); }catch(err){ writeErr(err); } }
   });
   $('#inScopeAll').onclick=()=>{ inScope='all'; renderTxnTable('in'); };
@@ -793,9 +799,13 @@ svg text{fill:var(--muted);font-family:var(--f-num);font-size:11px}
     db.doc('settings/staff').onSnapshot(d=>{ const n=d.exists?d.data().names:null; if(Array.isArray(n)) staff=n.filter(x=>typeof x==='string'); renderStaff(); },()=>{});
     const histSubs={};
     if(isOwner) db.collection('history').onSnapshot(s=>{ hist={all:s.docs.map(x=>({...x.data(),id:x.id,at:Number(x.data().at)||0}))}; renderHistory(); },()=>{});
-    db.collection('items').onSnapshot(s=>{ clearTimeout(timer); itemsLoaded=true; items=s.docs.map(d=>({...d.data(),id:d.id})); live(); render(); },onErr);
-    let outDocs=[], inDocs=[], gotOut=false, gotIn=false;
-    const merge=()=>{ txns=[...outDocs.filter(t=>t.type!=='in'), ...inDocs.map(t=>({...t,type:'in'}))]; txnsLoaded=gotOut&&gotIn; live(); render(); };
+    // 입고 기록이 하나도 없는 품목(입고에서 삭제된 품목)은 품목 목록·출고 내역·대시보드에서 숨김
+    let rawItems=[], outDocs=[], inDocs=[], gotOut=false, gotIn=false;
+    const merge=()=>{ const active=new Set(inDocs.map(t=>t.itemId));
+      items=rawItems.filter(i=>active.has(i.id));
+      txns=[...outDocs.filter(t=>t.type!=='in' && active.has(t.itemId)), ...inDocs.map(t=>({...t,type:'in'}))];
+      txnsLoaded=gotOut&&gotIn; live(); render(); };
+    db.collection('items').onSnapshot(s=>{ clearTimeout(timer); itemsLoaded=true; rawItems=s.docs.map(d=>({...d.data(),id:d.id})); merge(); },onErr);
     db.collection('txns').onSnapshot(s=>{ gotOut=true; outDocs=s.docs.map(d=>({...d.data(),id:d.id})); merge(); },onErr);
     db.collection('inbound').onSnapshot(s=>{ gotIn=true; inDocs=s.docs.map(d=>({...d.data(),id:d.id})); merge(); },onErr);
     function live(){ setStatus('live', canWrite?'팀 공유 · 20초마다 자동 새로고침':'보기 전용 · 수정하려면 소유자에게 권한을 요청하세요');
