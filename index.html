@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#0E6B5C">
 <meta name="robots" content="noindex">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}[hidden]{display:none!important}img{max-width:100%}</style>
-<script src="config.js?v=20261122d"></script>
-<script src="api.js?v=20261122d"></script>
+<script src="config.js?v=20261123a"></script>
+<script src="api.js?v=20261123a"></script>
 <title>판촉물 관리대장</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -624,13 +624,21 @@ svg text{fill:var(--muted);font-family:var(--f-num);font-size:11px}
       if(!(qty>0)){ err.textContent='수량은 1 이상이어야 합니다.'; return; }
       const comp=q('#eiComp').value==='직접입력' ? q('#eiCompText').value.trim() : q('#eiComp').value;
       if(q('#eiComp').value==='직접입력' && !comp){ err.textContent='구성품을 입력하세요.'; return; }
-      let it=await resolveItem(name); if(it===null) return; if(it==='new') it=undefined;
+      // 이름만 고치는 경우: 다른 품목과 정확히 같은 이름이 아니면 '현재 품목의 이름 변경'으로 처리 (중복 확인 창 없음)
+      const cur=itemById(t.itemId);
+      let it=items.find(i=>String(i.name||'').trim().toLowerCase()===name.toLowerCase());
+      const rename = !it && !!cur;
+      if(rename) it=cur;
+      if(!it){ it=await resolveItem(name); if(it===null) return; if(it==='new') it=undefined; }
       const sm=stockMap(); const old=sm[t.itemId]||{in:0,out:0};
       const sameItem = it && it.id===t.itemId;
       const oldAfter = old.in-old.out-(+t.qty||0)+(sameItem?qty:0);
       if(oldAfter<0){ err.textContent=`이미 출고된 수량보다 적어집니다. ${itemName(t)} 재고가 ${fmt(oldAfter)}이 됩니다.`; return; }
       const pr=q('#eiPrice').value;
       try{
+        if(rename){ await db.collection('items').doc(cur.id).set(clean({...cur, id:undefined, name, updatedAt:Date.now()})); it={...cur, name};
+          for(const x of txns.filter(x=>x.itemId===cur.id && x.id!==t.id)){
+            try{ await db.collection(x.type==='in'?'inbound':'txns').doc(x.id).set(clean({...x, id:undefined, itemName:name})); }catch(_){} } }
         if(!it){ const data={name,price:+pr||0,components:comp,note:'',createdAt:Date.now(),createdBy:myId};
           const ref=await db.collection('items').add(data); it={...data,id:ref.id}; }
         const upd={...t, id:undefined, itemId:it.id, itemName:it.name, qty, date:q('#eiDate').value||t.date, kind:q('#eiKind').value,
